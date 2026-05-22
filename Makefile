@@ -1,4 +1,4 @@
-IMAGE_REGISTRY ?= quay.io/melserng
+IMAGE_REGISTRY ?= ghcr.io/serngawy
 IMAGE_NAME     ?= env-healing-agents
 IMAGE_TAG      ?= latest
 IMAGE          := $(IMAGE_REGISTRY)/$(IMAGE_NAME):$(IMAGE_TAG)

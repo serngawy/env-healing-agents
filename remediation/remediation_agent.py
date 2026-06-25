@@ -33,6 +33,7 @@ from pathlib import Path
 from typing import Dict, List, Optional, Tuple
 
 from ..core.base_agent import BaseAgent
+from ..core.event import ActionType, FixStrategy, SequenceStep
 
 
 # ---------------------------------------------------------------------------
@@ -59,7 +60,7 @@ def _safe_param(value: str, name: str) -> str:
 class ActionExecutor:
     """Base class for all action executors."""
 
-    def __init__(self, strategy: Dict, params: Dict, agent: "RemediationAgent"):
+    def __init__(self, strategy: FixStrategy, params: Dict, agent: "RemediationAgent"):
         self.strategy = strategy
         self.params = params
         self.agent = agent
@@ -93,7 +94,7 @@ class AdvisoryExecutor(ActionExecutor):
     """
 
     def execute(self) -> Tuple[bool, str]:
-        action = self.strategy.get("action", {})
+        action = self.strategy.action
         message = self.sub(action.get("message", "Issue logged for review"))
         success = action.get("success", True)
         self.agent.log(message, "warning" if not success else "info")
@@ -115,7 +116,7 @@ class CliCommandExecutor(ActionExecutor):
     """
 
     def execute(self) -> Tuple[bool, str]:
-        action = self.strategy.get("action", {})
+        action = self.strategy.action
         command = self.sub_list(action.get("command", []))
         timeout = action.get("timeout", 30)
         not_found_ok = action.get("not_found_is_success", False)
@@ -198,76 +199,62 @@ class CliSequenceExecutor(ActionExecutor):
                 script = script.replace(placeholder, str(v))
         return script
 
-    def _run_shell_step(self, step: Dict) -> Tuple[bool, str]:
-        raw = step.get("shell", "")
-        if isinstance(raw, list):
-            raw = "\n".join(raw)
-        script = self._sub_shell(raw)
-        timeout = step.get("timeout", 60)
-        name = step.get("name", "shell-step")
-
-        self.agent.log(f"Shell step [{name}]: running via sh -c", "debug")
+    def _run_shell_step(self, step: SequenceStep) -> Tuple[bool, str]:
+        script = self._sub_shell(step.shell or "")
+        self.agent.log(f"Shell step [{step.name}]: running via sh -c", "debug")
         try:
             result = subprocess.run(
                 ["sh", "-c", script],
-                capture_output=True, text=True, timeout=timeout
+                capture_output=True, text=True, timeout=step.timeout
             )
             if result.returncode == 0:
-                return True, f"Step [{name}] succeeded"
-            return False, f"Step [{name}] failed (rc={result.returncode}): {result.stderr.strip()}"
+                return True, f"Step [{step.name}] succeeded"
+            return False, f"Step [{step.name}] failed (rc={result.returncode}): {result.stderr.strip()}"
         except subprocess.TimeoutExpired:
-            return False, f"Step [{name}] timed out after {timeout}s"
+            return False, f"Step [{step.name}] timed out after {step.timeout}s"
         except Exception as e:
-            return False, f"Step [{name}] error: {e}"
+            return False, f"Step [{step.name}] error: {e}"
 
-    def _run_command_step(self, step: Dict) -> Tuple[bool, str]:
-        name = step.get("name", "step")
-        command = self.sub_list(step.get("command", []))
-        timeout = step.get("timeout", 30)
-
+    def _run_command_step(self, step: SequenceStep) -> Tuple[bool, str]:
+        command = self.sub_list(step.command)
         if not command:
-            return True, f"Step [{name}] skipped (no command)"
+            return True, f"Step [{step.name}] skipped (no command)"
 
-        self.agent.log(f"Step [{name}]: {' '.join(command)}", "debug")
+        self.agent.log(f"Step [{step.name}]: {' '.join(command)}", "debug")
         try:
             result = subprocess.run(
-                command, capture_output=True, text=True, timeout=timeout
+                command, capture_output=True, text=True, timeout=step.timeout
             )
             if result.returncode == 0:
-                return True, f"Step [{name}] succeeded"
-            return False, f"Step [{name}] failed: {result.stderr.strip()}"
+                return True, f"Step [{step.name}] succeeded"
+            return False, f"Step [{step.name}] failed: {result.stderr.strip()}"
         except subprocess.TimeoutExpired:
-            return False, f"Step [{name}] timed out after {timeout}s"
+            return False, f"Step [{step.name}] timed out after {step.timeout}s"
         except Exception as e:
-            return False, f"Step [{name}] error: {e}"
+            return False, f"Step [{step.name}] error: {e}"
 
     def execute(self) -> Tuple[bool, str]:
-        action = self.strategy.get("action", {})
-        steps = action.get("steps", [])
+        action = self.strategy.action
+        steps = [SequenceStep.from_dict(s) for s in action.get("steps", [])]
         success_msg = self.sub(action.get("success_message", "All steps completed"))
         failure_msg = self.sub(action.get("failure_message", "Sequence failed"))
 
         completed: List[str] = []
 
         for step in steps:
-            name = step.get("name", "step")
-            optional = step.get("optional", False)
-            wait_after = step.get("wait_after", 0)
-            step_type = step.get("type", "command")
-
-            if step_type == "shell":
+            if step.type == "shell":
                 ok, msg = self._run_shell_step(step)
             else:
                 ok, msg = self._run_command_step(step)
 
             if ok:
-                completed.append(name)
-            elif not optional:
-                return False, f"{failure_msg} at step '{name}': {msg}"
+                completed.append(step.name)
+            elif not step.optional:
+                return False, f"{failure_msg} at step '{step.name}': {msg}"
 
-            if wait_after > 0:
-                self.agent.log(f"Waiting {wait_after}s after step [{name}]", "debug")
-                time.sleep(wait_after)
+            if step.wait_after > 0:
+                self.agent.log(f"Waiting {step.wait_after}s after step [{step.name}]", "debug")
+                time.sleep(step.wait_after)
 
         label = ", ".join(completed) if completed else "none"
         return True, f"{success_msg} (steps: {label})"
@@ -295,7 +282,7 @@ class KubectlPatchExecutor(ActionExecutor):
     """
 
     def execute(self) -> Tuple[bool, str]:
-        action = self.strategy.get("action", {})
+        action = self.strategy.action
         resource_type = self.params.get("resource_type", "")
         resource_name = self.params.get("resource_name", "")
         namespace = self.params.get("namespace", "default")
@@ -368,7 +355,7 @@ class RemediationAgent(BaseAgent):
         self.dry_run = dry_run
         self.fix_success_rate: Dict[str, Dict] = {}
 
-        self._fix_strategies: Optional[Dict] = None
+        self._fix_strategies: Optional[Dict[str, FixStrategy]] = None
 
         # Executor registry: action_type -> ActionExecutor subclass
         self._executors: Dict[str, type] = {
@@ -392,10 +379,11 @@ class RemediationAgent(BaseAgent):
     # ------------------------------------------------------------------
 
     @property
-    def fix_strategies(self) -> Dict:
+    def fix_strategies(self) -> Dict[str, FixStrategy]:
         if self._fix_strategies is None:
             data = self._load_knowledge("fix_strategies.json")
-            self._fix_strategies = data.get("fix_strategies", {})
+            raw = data.get("fix_strategies", {})
+            self._fix_strategies = {k: FixStrategy.from_dict(k, v) for k, v in raw.items()}
         return self._fix_strategies
 
     # ------------------------------------------------------------------
@@ -441,13 +429,12 @@ class RemediationAgent(BaseAgent):
             return False, error_msg
 
     def _dispatch(
-        self, strategy: Dict, params: Dict, fix_name: str
+        self, strategy: FixStrategy, params: Dict, fix_name: str
     ) -> Tuple[bool, str]:
-        action_type = strategy.get("action_type")
-        executor_class = self._executors.get(action_type)
+        executor_class = self._executors.get(strategy.action_type.value)
         if not executor_class:
             return False, (
-                f"Unknown action_type '{action_type}' for fix '{fix_name}'. "
+                f"Unknown action_type '{strategy.action_type.value}' for fix '{fix_name}'. "
                 f"Registered types: {list(self._executors)}"
             )
         executor = executor_class(strategy, params, agent=self)

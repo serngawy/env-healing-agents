@@ -6,7 +6,7 @@ import re
 from dataclasses import dataclass, field
 from datetime import datetime
 from enum import Enum
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List, Optional, Union
 
 
 class Severity(str, Enum):
@@ -185,3 +185,106 @@ class RemediationOutcome:
             resource_key=data.get("resource_key", ""),
             details=data.get("details", ""),
         )
+
+
+# ---------------------------------------------------------------------------
+# Fix strategy types
+# ---------------------------------------------------------------------------
+
+class ActionType(str, Enum):
+    ADVISORY = "advisory"
+    CLI_COMMAND = "cli_command"
+    CLI_SEQUENCE = "cli_sequence"
+    KUBECTL_PATCH = "kubectl_patch"
+
+
+@dataclass
+class SequenceStep:
+    """One step within a cli_sequence fix action."""
+
+    name: str
+    type: str  # "command" or "shell"
+    timeout: int = 30
+    optional: bool = False
+    wait_after: int = 0
+    command: List[str] = field(default_factory=list)
+    shell: Optional[str] = None  # shell script; list-of-strings joined at parse time
+
+    @classmethod
+    def from_dict(cls, data: Dict[str, Any]) -> "SequenceStep":
+        shell_raw = data.get("shell")
+        if isinstance(shell_raw, list):
+            shell: Optional[str] = "\n".join(shell_raw)
+        else:
+            shell = shell_raw
+        return cls(
+            name=data.get("name", "step"),
+            type=data.get("type", "command"),
+            timeout=int(data.get("timeout", 30)),
+            optional=bool(data.get("optional", False)),
+            wait_after=int(data.get("wait_after", 0)),
+            command=data.get("command", []),
+            shell=shell,
+        )
+
+    def to_dict(self) -> Dict[str, Any]:
+        d: Dict[str, Any] = {
+            "name": self.name,
+            "type": self.type,
+            "timeout": self.timeout,
+            "optional": self.optional,
+            "wait_after": self.wait_after,
+        }
+        if self.type == "shell":
+            d["shell"] = self.shell or ""
+        else:
+            d["command"] = self.command
+        return d
+
+
+@dataclass
+class FixStrategy:
+    """
+    A single entry from fix_strategies.json.
+
+    The ``action`` field is a raw dict whose schema depends on action_type:
+      advisory:      {message, success}
+      cli_command:   {command, timeout, not_found_is_success, success_message, failure_message}
+      cli_sequence:  {steps: [...], success_message, failure_message}
+      kubectl_patch: {patch, patch_type, kubectl_cmd, timeout, not_found_is_success, …}
+    """
+
+    key: str
+    name: str
+    description: str
+    automated: bool
+    action_type: ActionType
+    parameters: List[str]
+    action: Dict[str, Any]
+
+    @classmethod
+    def from_dict(cls, key: str, data: Dict[str, Any]) -> "FixStrategy":
+        raw_type = data.get("action_type", "")
+        try:
+            action_type = ActionType(raw_type)
+        except ValueError:
+            action_type = ActionType.ADVISORY
+        return cls(
+            key=key,
+            name=data.get("name", key),
+            description=data.get("description", ""),
+            automated=bool(data.get("automated", False)),
+            action_type=action_type,
+            parameters=data.get("parameters", []),
+            action=data.get("action", {}),
+        )
+
+    def to_dict(self) -> Dict[str, Any]:
+        return {
+            "name": self.name,
+            "description": self.description,
+            "automated": self.automated,
+            "action_type": self.action_type.value,
+            "parameters": self.parameters,
+            "action": self.action,
+        }

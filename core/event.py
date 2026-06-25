@@ -139,10 +139,49 @@ class Diagnosis:
 
 @dataclass
 class RemediationResult:
-    """Result of a remediation attempt."""
+    """Immediate result returned by the remediation agent after executing a fix."""
 
     success: bool
     message: str
     fix_applied: str = ""
     issue_type: str = ""
     dry_run: bool = False
+
+
+@dataclass
+class RemediationOutcome:
+    """Persisted record of a remediation attempt written to remediation_outcomes.json."""
+
+    issue_type: str
+    recommended_fix: str
+    success: bool
+    confidence_used: float
+    root_cause: str
+    resource_key: str = ""
+    details: str = ""
+    timestamp: str = field(default_factory=lambda: datetime.now().isoformat())
+
+    def to_dict(self) -> Dict[str, Any]:
+        return {
+            "timestamp": self.timestamp,
+            "issue_type": self.issue_type,
+            "recommended_fix": self.recommended_fix,
+            "success": self.success,
+            "confidence_used": self.confidence_used,
+            "root_cause": self.root_cause,
+            "resource_key": self.resource_key,
+            "details": self.details,
+        }
+
+    @classmethod
+    def from_dict(cls, data: Dict[str, Any]) -> "RemediationOutcome":
+        return cls(
+            timestamp=data.get("timestamp", ""),
+            issue_type=data.get("issue_type", ""),
+            recommended_fix=data.get("recommended_fix", ""),
+            success=bool(data.get("success", False)),
+            confidence_used=float(data.get("confidence_used", 0.0)),
+            root_cause=data.get("root_cause", ""),
+            resource_key=data.get("resource_key", ""),
+            details=data.get("details", ""),
+        )

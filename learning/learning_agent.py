@@ -20,6 +20,7 @@ from pathlib import Path
 from typing import Dict, List, Optional
 
 from ..core.base_agent import BaseAgent
+from ..core.event import Diagnosis, RemediationOutcome
 
 
 class LearningAgent(BaseAgent):
@@ -29,7 +30,7 @@ class LearningAgent(BaseAgent):
         super().__init__("Learning", kb_dir, enabled, verbose)
         self.outcomes_file = self.kb_dir / "remediation_outcomes.json"
         self.pending_file = self.kb_dir / "pending_learnings.json"
-        self.session_outcomes: List[Dict] = []
+        self.session_outcomes: List[RemediationOutcome] = []
 
     def record_outcome(
         self,
@@ -45,16 +46,15 @@ class LearningAgent(BaseAgent):
         if not self.enabled:
             return
 
-        outcome = {
-            "timestamp": datetime.now().isoformat(),
-            "issue_type": issue_type,
-            "recommended_fix": fix_applied,
-            "success": success,
-            "confidence_used": confidence,
-            "root_cause": root_cause,
-            "resource_key": resource_key,
-            "details": details,
-        }
+        outcome = RemediationOutcome(
+            issue_type=issue_type,
+            recommended_fix=fix_applied,
+            success=success,
+            confidence_used=confidence,
+            root_cause=root_cause,
+            resource_key=resource_key,
+            details=details,
+        )
         self.session_outcomes.append(outcome)
         status = "SUCCESS" if success else "FAILED"
         self.log(f"Outcome recorded: {issue_type} -> {fix_applied} = {status}", "info")
@@ -68,12 +68,12 @@ class LearningAgent(BaseAgent):
 
         fix_stats: Dict[str, Dict] = {}
         for outcome in self.session_outcomes:
-            key = f"{outcome['issue_type']}:{outcome['recommended_fix']}"
+            key = f"{outcome.issue_type}:{outcome.recommended_fix}"
             entry = fix_stats.setdefault(
                 key,
-                {"successes": 0, "failures": 0, "issue_type": outcome["issue_type"], "fix": outcome["recommended_fix"]},
+                {"successes": 0, "failures": 0, "issue_type": outcome.issue_type, "fix": outcome.recommended_fix},
             )
-            if outcome["success"]:
+            if outcome.success:
                 entry["successes"] += 1
             else:
                 entry["failures"] += 1
@@ -105,7 +105,7 @@ class LearningAgent(BaseAgent):
         }
 
     def suggest_new_pattern(
-        self, log_line: str, diagnosis: Dict, fix_applied: str, success: bool
+        self, log_line: str, diagnosis: Diagnosis, fix_applied: str, success: bool
     ):
         """Suggest a new pattern for human review (never auto-added to knowledge base)."""
         if not self.enabled:
@@ -115,34 +115,34 @@ class LearningAgent(BaseAgent):
             "status": "pending_review",
             "trigger_line": log_line[:500],
             "suggested_pattern": {
-                "type": diagnosis.get("issue_type", "unknown"),
+                "type": diagnosis.issue_type,
                 "pattern": "",
-                "severity": diagnosis.get("severity", "medium"),
+                "severity": diagnosis.severity.value,
                 "auto_fix": False,
-                "description": diagnosis.get("root_cause", ""),
+                "description": diagnosis.root_cause,
                 "suggested_fix": fix_applied,
                 "fix_success": success,
             },
             "diagnosis_details": {
-                "root_cause": diagnosis.get("root_cause", ""),
-                "confidence": diagnosis.get("confidence", 0),
-                "evidence": diagnosis.get("evidence", []),
-                "recommended_fix": diagnosis.get("recommended_fix", ""),
+                "root_cause": diagnosis.root_cause,
+                "confidence": diagnosis.confidence,
+                "evidence": diagnosis.evidence,
+                "recommended_fix": diagnosis.recommended_fix,
             },
         }
         self._append_pending(suggestion)
-        self.log(f"New pattern suggested for review: {diagnosis.get('issue_type', 'unknown')}", "info")
+        self.log(f"New pattern suggested for review: {diagnosis.issue_type}", "info")
 
-    def _calculate_confidence_adjustments(self, all_outcomes: List[Dict]) -> List[Dict]:
+    def _calculate_confidence_adjustments(self, all_outcomes: List[RemediationOutcome]) -> List[Dict]:
         adjustments = []
-        by_type: Dict[str, List] = {}
+        by_type: Dict[str, List[RemediationOutcome]] = {}
         for outcome in all_outcomes:
-            by_type.setdefault(outcome["issue_type"], []).append(outcome)
+            by_type.setdefault(outcome.issue_type, []).append(outcome)
 
         for issue_type, outcomes in by_type.items():
-            outcomes.sort(key=lambda x: x.get("timestamp", ""))
+            outcomes.sort(key=lambda o: o.timestamp)
             recent = outcomes[-5:]
-            successes = sum(1 for o in recent if o["success"])
+            successes = sum(1 for o in recent if o.success)
             failures = len(recent) - successes
 
             if successes >= 3 and failures == 0:
@@ -199,15 +199,12 @@ class LearningAgent(BaseAgent):
         if not self.session_outcomes:
             return
         try:
-            existing: List = []
-            if self.outcomes_file.exists():
-                with open(self.outcomes_file, "r") as f:
-                    existing = json.load(f)
+            existing: List[RemediationOutcome] = self._load_all_outcomes()
             existing.extend(self.session_outcomes)
             if len(existing) > 500:
                 existing = existing[-500:]
             with open(self.outcomes_file, "w") as f:
-                json.dump(existing, f, indent=2)
+                json.dump([o.to_dict() for o in existing], f, indent=2)
                 f.write("\n")
             self.session_outcomes = []
         except Exception as e:
@@ -224,11 +221,11 @@ class LearningAgent(BaseAgent):
         except Exception as e:
             self.log(f"Failed to sync outcomes to ConfigMap: {e}", "warning")
 
-    def _load_all_outcomes(self) -> List[Dict]:
+    def _load_all_outcomes(self) -> List[RemediationOutcome]:
         try:
             if self.outcomes_file.exists():
                 with open(self.outcomes_file, "r") as f:
-                    return json.load(f)
+                    return [RemediationOutcome.from_dict(o) for o in json.load(f)]
         except Exception:
             pass
         return []
@@ -259,9 +256,10 @@ class LearningAgent(BaseAgent):
         all_outcomes = self._load_all_outcomes()
         fix_stats: Dict[str, Dict] = {}
         for outcome in all_outcomes:
-            fix = outcome.get("recommended_fix", "unknown")
-            entry = fix_stats.setdefault(fix, {"successes": 0, "failures": 0})
-            if outcome["success"]:
+            entry = fix_stats.setdefault(
+                outcome.recommended_fix, {"successes": 0, "failures": 0}
+            )
+            if outcome.success:
                 entry["successes"] += 1
             else:
                 entry["failures"] += 1

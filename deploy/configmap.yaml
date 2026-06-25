@@ -5,8 +5,9 @@ metadata:
 
 ---
 # ---------------------------------------------------------------------------
-# known_issues.json — chunk 1 of 2 (patterns 1-6)
-# Add env-healing-agents-known-issues-3, -4, … when this file grows past ~900 KB.
+# known_issues.json
+# Add patterns for your environment here, or let the AI agent discover and
+# persist them automatically at runtime.
 # ---------------------------------------------------------------------------
 apiVersion: v1
 kind: ConfigMap
@@ -20,122 +21,15 @@ data:
   data.json: |
     {
       "version": "1.0.0",
-      "description": "Known issues — chunk 1 of 2",
-      "patterns": [
-        {
-          "type": "cloudformation_deletion_failure",
-          "pattern": "CloudFormation stack DELETE_FAILED:.*|FAILED - RETRYING.*cloudformation.*deletion",
-          "severity": "high",
-          "auto_fix": true,
-          "description": "AWS CloudFormation stack deletion failure — ROSA creates security groups outside CF that block VPC deletion",
-          "learned_confidence": 1.0,
-          "last_adjusted": "2026-03-31T16:10:22.909159",
-          "adjustment_reason": "4 consecutive successes in last 4 runs"
-        },
-        {
-          "type": "ocm_auth_failure",
-          "pattern": ".*(ocm|openshift cluster manager).*(401|403|unauthorized|forbidden).*",
-          "severity": "medium",
-          "auto_fix": true,
-          "description": "OpenShift Cluster Manager authentication failure"
-        },
-        {
-          "type": "capi_not_installed",
-          "pattern": ".*(capi|cluster.*api).*(not found|does not exist|no.*running).*",
-          "severity": "high",
-          "auto_fix": false,
-          "description": "CAPI/CAPA controllers not installed or running"
-        },
-        {
-          "type": "api_rate_limit",
-          "pattern": "^(?!.*(?:Pattern matched|Issue detected|Fix applied|Monitor|Remediation|RETRYING|retries left)).*(?:HTTP.*429|rate.limit.exceed|throttl.*request|too.many.requests.*api).*",
-          "severity": "low",
-          "auto_fix": true,
-          "description": "API rate limiting encountered"
-        },
-        {
-          "type": "resource_quota_exceeded",
-          "pattern": ".*(quota|limit).*exceed.*",
-          "severity": "medium",
-          "auto_fix": false,
-          "description": "Resource quota or limit exceeded"
-        },
-        {
-          "type": "rosacontrolplane_stuck_deletion",
-          "pattern": "FAILED - RETRYING.*(?:rosacontrolplane|ROSAControlPlane).*(?:delet|still exists)|FAILED - RETRYING.*(?:delet).*(?:rosacontrolplane|ROSAControlPlane)",
-          "severity": "high",
-          "auto_fix": true,
-          "description": "ROSAControlPlane stuck in deletion state due to finalizers or AWS resource cleanup"
-        }
-      ]
-    }
-
----
-# known_issues.json — chunk 2 of 2 (patterns 7-12)
-apiVersion: v1
-kind: ConfigMap
-metadata:
-  name: env-healing-agents-known-issues-2
-  namespace: env-healing-agents-ns
-  labels:
-    app: env-healing-agents
-    knowledge-base: known-issues
-data:
-  data.json: |
-    {
-      "description": "Known issues — chunk 2 of 2",
-      "patterns": [
-        {
-          "type": "rosanetwork_stuck_deletion",
-          "pattern": "FAILED - RETRYING.*(?:rosanetwork|ROSANetwork).*(?:delet|still exists)|FAILED - RETRYING.*(?:delet).*(?:rosanetwork|ROSANetwork)",
-          "severity": "high",
-          "auto_fix": true,
-          "description": "ROSANetwork stuck in deletion state due to finalizers or VPC dependencies",
-          "learned_confidence": 1.0,
-          "last_adjusted": "2026-03-31T16:08:36.149421",
-          "adjustment_reason": "4 consecutive successes in last 4 runs"
-        },
-        {
-          "type": "rosaroleconfig_stuck_deletion",
-          "pattern": "FAILED - RETRYING.*(?:rosaroleconfig|ROSARoleConfig).*(?:delet|still exists)|FAILED - RETRYING.*(?:delet).*(?:rosaroleconfig|ROSARoleConfig)",
-          "severity": "high",
-          "auto_fix": true,
-          "description": "ROSARoleConfig stuck in deletion state due to finalizers or IAM cleanup"
-        },
-        {
-          "type": "vpc_deletion_failure",
-          "pattern": ".*vpc.*(has dependencies|cannot be deleted|delete.*fail|DELETE_FAILED).*",
-          "severity": "high",
-          "auto_fix": true,
-          "description": "VPC deletion failure due to orphaned dependencies"
-        },
-        {
-          "type": "networking_configuration_error",
-          "pattern": "(?i)(?:subnet|vpc).*(?:invalid|not found|does not exist|no route|unreachable)",
-          "severity": "high",
-          "auto_fix": false,
-          "description": "Network configuration error"
-        },
-        {
-          "type": "repeated_timeouts",
-          "pattern": "^(?!.*(?:Pattern matched|Issue detected|RETRYING)).*(?:timed?.out|timeout.*(?:waiting|exceeded|expired)).*",
-          "severity": "medium",
-          "auto_fix": false,
-          "description": "Operation timing out repeatedly"
-        },
-        {
-          "type": "iam_permission_error",
-          "pattern": "(?i)(?:access denied|not authorized|AccessDenied|UnauthorizedAccess|iam.*(?:error|fail|denied))",
-          "severity": "high",
-          "auto_fix": false,
-          "description": "IAM permission or role error"
-        }
-      ]
+      "description": "Known issues and error patterns — add entries for your environment",
+      "patterns": []
     }
 
 ---
 # ---------------------------------------------------------------------------
-# fix_strategies.json — chunk 1 of 1
+# fix_strategies.json
+# Add fix strategies for your environment here.
+# log_and_continue is the built-in fallback used when no specific fix is found.
 # ---------------------------------------------------------------------------
 apiVersion: v1
 kind: ConfigMap
@@ -148,184 +42,18 @@ metadata:
 data:
   data.json: |
     {
-      "version": "2.1.0",
-      "description": "Machine-executable fix strategies — chunk 1 of 1",
+      "version": "1.0.0",
+      "description": "Fix strategies — add entries for your environment",
       "fix_strategies": {
-        "backoff_and_retry": {
-          "action_type": "advisory",
-          "parameters": ["backoff_seconds", "max_retries"],
-          "action": {
-            "message": "Rate limit detected: wait {backoff_seconds}s before retrying (max {max_retries} retries)",
-            "success": true
-          }
-        },
-        "refresh_ocm_token": {
-          "action_type": "advisory",
-          "parameters": [],
-          "action": {
-            "message": "OCM token refresh requires manual intervention — update credentials and retry",
-            "success": false
-          }
-        },
         "log_and_continue": {
+          "name": "Log and Continue",
+          "description": "Log the issue for review and continue execution.",
+          "automated": true,
           "action_type": "advisory",
           "parameters": [],
           "action": {
-            "message": "Issue logged for review — test execution continues",
+            "message": "Issue logged for review — execution continues",
             "success": true
-          }
-        },
-        "manual_cloudformation_cleanup": {
-          "action_type": "advisory",
-          "parameters": ["message"],
-          "action": {
-            "message": "MANUAL INTERVENTION REQUIRED: {message}",
-            "success": true
-          }
-        },
-        "increase_timeout_and_monitor": {
-          "action_type": "advisory",
-          "parameters": ["suggested_timeout_increase"],
-          "action": {
-            "message": "Recommend increasing timeout by {suggested_timeout_increase} for this operation",
-            "success": true
-          }
-        },
-        "install_capi_capa": {
-          "action_type": "cli_sequence",
-          "parameters": [],
-          "action": {
-            "steps": [
-              {
-                "name": "check_capi",
-                "type": "command",
-                "command": ["oc", "get", "deployment", "capi-controller-manager", "-n", "capi-system"],
-                "timeout": 10,
-                "optional": true
-              },
-              {
-                "name": "check_capa",
-                "type": "command",
-                "command": ["oc", "get", "deployment", "capa-controller-manager", "-n", "capa-system"],
-                "timeout": 10,
-                "optional": true
-              }
-            ],
-            "success_message": "CAPI/CAPA controllers verified — both namespaces reachable",
-            "failure_message": "CAPI/CAPA not installed — run suite 10-configure-mce-environment"
-          }
-        },
-        "retry_cloudformation_delete": {
-          "action_type": "cli_sequence",
-          "parameters": ["stack_name", "region"],
-          "action": {
-            "steps": [
-              {
-                "name": "verify_stack_state",
-                "type": "shell",
-                "shell": [
-                  "STATUS=$(aws cloudformation describe-stacks --stack-name {stack_name} --region {region} --query 'Stacks[0].StackStatus' --output text 2>&1)",
-                  "RC=$?",
-                  "if [ $RC -ne 0 ]; then",
-                  "  echo \"$STATUS\" | grep -qi 'does not exist' && echo 'Stack already deleted' && exit 0",
-                  "  echo \"Error: $STATUS\" && exit 1",
-                  "fi",
-                  "case \"$STATUS\" in",
-                  "  DELETE_FAILED|DELETE_IN_PROGRESS) echo \"Stack status: $STATUS, proceeding\" ;;",
-                  "  *) echo \"Unexpected state: $STATUS\" && exit 1 ;;",
-                  "esac"
-                ],
-                "timeout": 15,
-                "optional": false
-              },
-              {
-                "name": "delete_vpc_endpoints",
-                "type": "shell",
-                "shell": [
-                  "VPC_ID=$(aws cloudformation list-stack-resources --stack-name {stack_name} --region {region} --query 'StackResourceSummaries[?ResourceType==`AWS::EC2::VPC`].PhysicalResourceId' --output text 2>/dev/null)",
-                  "[ -z \"$VPC_ID\" ] && echo 'No VPC in stack' && exit 0",
-                  "VPCE=$(aws ec2 describe-vpc-endpoints --region {region} --filters 'Name=vpc-id,Values='\"$VPC_ID\" --query 'VpcEndpoints[*].VpcEndpointId' --output text 2>/dev/null)",
-                  "[ -n \"$VPCE\" ] && aws ec2 delete-vpc-endpoints --region {region} --vpc-endpoint-ids $VPCE && sleep 20 || echo 'No endpoints'"
-                ],
-                "timeout": 90,
-                "optional": true
-              },
-              {
-                "name": "delete_enis",
-                "type": "shell",
-                "shell": [
-                  "VPC_ID=$(aws cloudformation list-stack-resources --stack-name {stack_name} --region {region} --query 'StackResourceSummaries[?ResourceType==`AWS::EC2::VPC`].PhysicalResourceId' --output text 2>/dev/null)",
-                  "[ -z \"$VPC_ID\" ] && exit 0",
-                  "for ENI in $(aws ec2 describe-network-interfaces --region {region} --filters 'Name=vpc-id,Values='\"$VPC_ID\" --query 'NetworkInterfaces[*].NetworkInterfaceId' --output text 2>/dev/null); do",
-                  "  AID=$(aws ec2 describe-network-interfaces --region {region} --network-interface-ids \"$ENI\" --query 'NetworkInterfaces[0].Attachment.AttachmentId' --output text 2>/dev/null)",
-                  "  [ -n \"$AID\" ] && [ \"$AID\" != 'None' ] && aws ec2 detach-network-interface --region {region} --attachment-id \"$AID\" --force 2>/dev/null && sleep 2",
-                  "  aws ec2 delete-network-interface --region {region} --network-interface-id \"$ENI\" && echo \"Deleted ENI $ENI\"",
-                  "done"
-                ],
-                "timeout": 180,
-                "optional": true
-              },
-              {
-                "name": "delete_security_groups",
-                "type": "shell",
-                "shell": [
-                  "VPC_ID=$(aws cloudformation list-stack-resources --stack-name {stack_name} --region {region} --query 'StackResourceSummaries[?ResourceType==`AWS::EC2::VPC`].PhysicalResourceId' --output text 2>/dev/null)",
-                  "[ -z \"$VPC_ID\" ] && exit 0",
-                  "for SG in $(aws ec2 describe-security-groups --region {region} --filters 'Name=vpc-id,Values='\"$VPC_ID\" --query 'SecurityGroups[?GroupName!=`default`].GroupId' --output text 2>/dev/null); do",
-                  "  aws ec2 delete-security-group --region {region} --group-id \"$SG\" && echo \"Deleted SG $SG\"",
-                  "done"
-                ],
-                "timeout": 60,
-                "optional": true
-              },
-              {
-                "name": "retry_stack_deletion",
-                "type": "shell",
-                "shell": [
-                  "STATUS=$(aws cloudformation describe-stacks --stack-name {stack_name} --region {region} --query 'Stacks[0].StackStatus' --output text 2>/dev/null || echo 'GONE')",
-                  "[ \"$STATUS\" = 'DELETE_FAILED' ] && aws cloudformation delete-stack --stack-name {stack_name} --region {region} && sleep 5",
-                  "echo 'Retry complete, final status:' $(aws cloudformation describe-stacks --stack-name {stack_name} --region {region} --query 'Stacks[0].StackStatus' --output text 2>/dev/null || echo 'GONE')"
-                ],
-                "timeout": 30,
-                "optional": false
-              }
-            ],
-            "success_message": "CloudFormation stack {stack_name} cleanup and retry complete",
-            "failure_message": "Failed to clean up or retry CloudFormation stack {stack_name}"
-          }
-        },
-        "cleanup_vpc_dependencies": {
-          "action_type": "cli_sequence",
-          "parameters": ["vpc_id", "cluster_id", "region"],
-          "action": {
-            "steps": [
-              {
-                "name": "delete_tagged_enis",
-                "type": "shell",
-                "shell": [
-                  "for ENI in $(aws ec2 describe-network-interfaces --region {region} --filters 'Name=vpc-id,Values={vpc_id}' 'Name=tag:cluster.x-k8s.io/cluster-name,Values={cluster_id}' --query 'NetworkInterfaces[*].NetworkInterfaceId' --output text 2>/dev/null); do",
-                  "  AID=$(aws ec2 describe-network-interfaces --region {region} --network-interface-ids \"$ENI\" --query 'NetworkInterfaces[0].Attachment.AttachmentId' --output text 2>/dev/null)",
-                  "  [ -n \"$AID\" ] && [ \"$AID\" != 'None' ] && aws ec2 detach-network-interface --region {region} --attachment-id \"$AID\" --force 2>/dev/null && sleep 2",
-                  "  aws ec2 delete-network-interface --region {region} --network-interface-id \"$ENI\" && echo \"Deleted ENI $ENI\"",
-                  "done"
-                ],
-                "timeout": 120,
-                "optional": false
-              },
-              {
-                "name": "delete_tagged_security_groups",
-                "type": "shell",
-                "shell": [
-                  "for SG in $(aws ec2 describe-security-groups --region {region} --filters 'Name=vpc-id,Values={vpc_id}' 'Name=tag:red-hat-clustertype,Values={cluster_id}' --query 'SecurityGroups[?GroupName!=`default`].GroupId' --output text 2>/dev/null); do",
-                  "  aws ec2 delete-security-group --region {region} --group-id \"$SG\" && echo \"Deleted SG $SG\"",
-                  "done"
-                ],
-                "timeout": 60,
-                "optional": true
-              }
-            ],
-            "success_message": "VPC {vpc_id} dependency cleanup complete",
-            "failure_message": "Failed to clean up VPC {vpc_id} dependencies"
           }
         }
       }
@@ -333,7 +61,8 @@ data:
 
 ---
 # ---------------------------------------------------------------------------
-# remediation_outcomes.json — chunk 1 of 1
+# remediation_outcomes.json
+# Populated at runtime by the learning agent — do not edit manually.
 # ---------------------------------------------------------------------------
 apiVersion: v1
 kind: ConfigMap

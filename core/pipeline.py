@@ -32,7 +32,7 @@ from datetime import datetime
 from pathlib import Path
 from typing import List, Optional
 
-from .event import LogLine
+from .event import Issue, KnownIssuePattern, LogLine
 from ..frameworks.base_framework import BaseTestFramework
 from ..monitoring.monitoring_agent import MonitoringAgent
 from ..diagnostic.diagnostic_agent import DiagnosticAgent
@@ -182,33 +182,45 @@ class AgentPipeline:
                 with self._agent_lock:
                     self.monitor.process_line(item)
 
-    def _on_issue_detected(self, issue_type: str, context: dict, issue: dict) -> None:
+    def _on_issue_detected(self, issue_type: str, context: dict, issue_dict: dict) -> None:
         """Handle detected issue through the diagnostic → remediation → learning chain."""
         resource_key = context.get("resource_key", "unknown")
         try:
-            diagnosis = self.diagnostic.diagnose(issue_type, context)
+            log_line = LogLine(
+                content=context.get("line", ""),
+                stream_name=context.get("stream_name", ""),
+                stream_metadata=context.get("stream_metadata", {}),
+            )
+            issue = Issue(
+                issue_type=issue_type,
+                pattern=KnownIssuePattern.from_dict(issue_dict),
+                log_line=log_line,
+                context=context,
+                resource_key=resource_key,
+            )
+
+            diagnosis = self.diagnostic.diagnose(issue)
             if not diagnosis:
                 self.monitor.mark_issue_failed(issue_type, resource_key)
                 return
 
-            confidence = diagnosis.get("confidence", 0.0)
-            if confidence < self.confidence_threshold:
+            if diagnosis.confidence < self.confidence_threshold:
                 self.monitor.log(
-                    f"Confidence {confidence:.0%} below threshold {self.confidence_threshold:.0%} "
-                    f"for {issue_type} — skipping remediation",
+                    f"Confidence {diagnosis.confidence:.0%} below threshold "
+                    f"{self.confidence_threshold:.0%} for {issue_type} — skipping remediation",
                     "info",
                 )
                 self.monitor.mark_issue_failed(issue_type, resource_key)
                 return
 
-            success, message = self.remediation.remediate(diagnosis)
+            success, message = self.remediation.remediate(diagnosis.to_dict())
 
             self.learning.record_outcome(
                 issue_type=issue_type,
-                fix_applied=diagnosis.get("recommended_fix", ""),
+                fix_applied=diagnosis.recommended_fix or "",
                 success=success,
-                confidence=confidence,
-                root_cause=diagnosis.get("root_cause", ""),
+                confidence=diagnosis.confidence,
+                root_cause=diagnosis.root_cause,
                 resource_key=resource_key,
             )
 

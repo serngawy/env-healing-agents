@@ -1,4 +1,4 @@
-from .event import LogLine, Issue, Diagnosis, RemediationResult, Severity, IssueState
+from .event import LogLine, Issue, Diagnosis, RemediationResult, Severity, IssueState, KnownIssuePattern
 from .base_agent import BaseAgent
 from .pipeline import AgentPipeline
 
@@ -9,6 +9,7 @@ __all__ = [
     "RemediationResult",
     "Severity",
     "IssueState",
+    "KnownIssuePattern",
     "BaseAgent",
     "AgentPipeline",
 ]

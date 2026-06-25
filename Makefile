@@ -1,6 +1,6 @@
 IMAGE_REGISTRY ?= ghcr.io/serngawy
 IMAGE_NAME     ?= env-healing-agents
-IMAGE_TAG      ?= latest
+IMAGE_TAG      ?= dev
 IMAGE          := $(IMAGE_REGISTRY)/$(IMAGE_NAME):$(IMAGE_TAG)
 
 # Pods to watch — override on the command line.

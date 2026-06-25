@@ -2,6 +2,7 @@
 Event data model for the agent pipeline.
 """
 
+import re
 from dataclasses import dataclass, field
 from datetime import datetime
 from enum import Enum
@@ -24,6 +25,69 @@ class IssueState(str, Enum):
 
 
 @dataclass
+class KnownIssuePattern:
+    """Defines a known issue pattern used for detection and diagnosis."""
+
+    type: str
+    pattern: str
+    severity: Severity
+    auto_fix: bool
+    description: str
+    symptoms: List[str] = field(default_factory=list)
+    common_causes: List[str] = field(default_factory=list)
+    recommended_fix: Optional[str] = None
+    learned_confidence: float = 0.5
+    last_adjusted: Optional[str] = None
+    adjustment_reason: Optional[str] = None
+
+    def matches(self, text: str) -> bool:
+        """Return True if *text* matches this pattern (case-insensitive)."""
+        return bool(re.search(self.pattern, text, re.IGNORECASE))
+
+    def to_dict(self) -> Dict[str, Any]:
+        """Serialize to a plain dict suitable for JSON storage."""
+        d: Dict[str, Any] = {
+            "type": self.type,
+            "pattern": self.pattern,
+            "severity": self.severity.value if isinstance(self.severity, Severity) else self.severity,
+            "auto_fix": self.auto_fix,
+            "description": self.description,
+            "symptoms": self.symptoms,
+            "common_causes": self.common_causes,
+            "learned_confidence": self.learned_confidence,
+        }
+        if self.recommended_fix is not None:
+            d["recommended_fix"] = self.recommended_fix
+        if self.last_adjusted is not None:
+            d["last_adjusted"] = self.last_adjusted
+        if self.adjustment_reason is not None:
+            d["adjustment_reason"] = self.adjustment_reason
+        return d
+
+    @classmethod
+    def from_dict(cls, data: Dict[str, Any]) -> "KnownIssuePattern":
+        """Deserialize from a plain dict (e.g. loaded from known_issues.json)."""
+        severity_raw = data.get("severity", "medium")
+        try:
+            severity = Severity(severity_raw)
+        except ValueError:
+            severity = Severity.MEDIUM
+        return cls(
+            type=data["type"],
+            pattern=data["pattern"],
+            severity=severity,
+            auto_fix=bool(data.get("auto_fix", False)),
+            description=data.get("description", ""),
+            symptoms=data.get("symptoms", []),
+            common_causes=data.get("common_causes", []),
+            recommended_fix=data.get("recommended_fix"),
+            learned_confidence=float(data.get("learned_confidence", 0.5)),
+            last_adjusted=data.get("last_adjusted"),
+            adjustment_reason=data.get("adjustment_reason"),
+        )
+
+
+@dataclass
 class LogLine:
     """A single log line with source metadata."""
 
@@ -38,7 +102,7 @@ class Issue:
     """A detected issue with context."""
 
     issue_type: str
-    pattern: Dict[str, Any]
+    pattern: KnownIssuePattern
     log_line: LogLine
     context: Dict[str, Any] = field(default_factory=dict)
     state: IssueState = IssueState.DETECTED
@@ -59,6 +123,18 @@ class Diagnosis:
     evidence: List[str] = field(default_factory=list)
     recommended_fix: Optional[str] = None
     fix_parameters: Dict[str, Any] = field(default_factory=dict)
+
+    def to_dict(self) -> Dict[str, Any]:
+        """Serialize to a plain dict (e.g. for passing to remediation_agent)."""
+        return {
+            "issue_type": self.issue_type,
+            "root_cause": self.root_cause,
+            "confidence": self.confidence,
+            "severity": self.severity.value if isinstance(self.severity, Severity) else self.severity,
+            "evidence": self.evidence,
+            "recommended_fix": self.recommended_fix,
+            "fix_parameters": self.fix_parameters,
+        }
 
 
 @dataclass

@@ -4,6 +4,8 @@
 - [Runner Adapters](#runner-adapters)
 - [CLI Usage](#cli-usage)
 - [Python API](#python-api)
+- [Data Model](#data-model)
+- [Testing](#testing)
 
 ---
 
@@ -300,3 +302,173 @@ pipeline = AgentPipeline(
 pipeline.run()
 report = pipeline.get_report()
 ```
+
+---
+
+## Data Model
+
+All dataclasses live in `core/event.py` and are exported from `core/__init__.py`.
+
+### `Severity`
+
+```python
+class Severity(str, Enum):
+    LOW = "low"
+    MEDIUM = "medium"
+    HIGH = "high"
+    CRITICAL = "critical"
+```
+
+### `KnownIssuePattern`
+
+Represents one entry in `known_issues.json`. Produced by the monitoring agent when a log line matches a pattern; consumed by the diagnostic agent.
+
+| Field | Type | Description |
+|---|---|---|
+| `type` | `str` | Unique issue identifier |
+| `pattern` | `str` | Python regex (case-insensitive) |
+| `severity` | `Severity` | |
+| `auto_fix` | `bool` | Whether to attempt automated remediation |
+| `description` | `str` | Short human-readable description |
+| `symptoms` | `List[str]` | Observable symptoms — used as evidence in diagnoses |
+| `common_causes` | `List[str]` | Common root causes |
+| `recommended_fix` | `Optional[str]` | Fix strategy key; defaults to `log_and_continue` |
+| `learned_confidence` | `float` | Confidence score adjusted by the learning agent (0.0–1.0) |
+| `last_adjusted` | `Optional[str]` | ISO timestamp of last confidence adjustment |
+| `adjustment_reason` | `Optional[str]` | Reason the learning agent last adjusted confidence |
+
+Key methods: `matches(text) -> bool`, `to_dict()`, `from_dict(data)`.
+
+### `Diagnosis`
+
+Produced by the diagnostic agent after analysing an `Issue`.
+
+| Field | Type | Description |
+|---|---|---|
+| `issue_type` | `str` | Matches `KnownIssuePattern.type` |
+| `root_cause` | `str` | Human-readable root cause |
+| `confidence` | `float` | 0.0–1.0; must exceed `confidence_threshold` to trigger remediation |
+| `severity` | `Severity` | |
+| `evidence` | `List[str]` | Log lines or symptoms supporting the diagnosis |
+| `recommended_fix` | `Optional[str]` | Key into `fix_strategies.json` |
+| `fix_parameters` | `Dict[str, Any]` | `{param}` values substituted into fix strategy commands |
+
+Key method: `to_dict()` — converts to a plain dict for passing to `RemediationAgent.remediate()`.
+
+### `RemediationOutcome`
+
+Persisted record of every remediation attempt, appended to `remediation_outcomes.json` and read by the learning agent.
+
+| Field | Type | Description |
+|---|---|---|
+| `issue_type` | `str` | |
+| `recommended_fix` | `str` | Fix strategy key that was applied |
+| `success` | `bool` | Whether the fix succeeded |
+| `confidence_used` | `float` | Diagnosis confidence at the time of remediation |
+| `root_cause` | `str` | |
+| `resource_key` | `str` | `namespace/name` of the affected resource |
+| `details` | `str` | Extra notes |
+| `timestamp` | `str` | ISO timestamp (auto-set on creation) |
+
+Key methods: `to_dict()`, `from_dict(data)`.
+
+### `ActionType`
+
+```python
+class ActionType(str, Enum):
+    ADVISORY = "advisory"
+    CLI_COMMAND = "cli_command"
+    CLI_SEQUENCE = "cli_sequence"
+    KUBECTL_PATCH = "kubectl_patch"
+```
+
+Typed representation of the `action_type` field in `fix_strategies.json`. Because it inherits `str`, `ActionType.ADVISORY == "advisory"` is `True`.
+
+### `SequenceStep`
+
+One step within a `cli_sequence` fix action.
+
+| Field | Type | Description |
+|---|---|---|
+| `name` | `str` | Human-readable step label |
+| `type` | `str` | `"command"` or `"shell"` |
+| `command` | `List[str]` | Argv list (used when `type == "command"`) |
+| `shell` | `Optional[str]` | Shell script body (used when `type == "shell"`) |
+| `timeout` | `int` | Seconds before the step is killed (default 30) |
+| `optional` | `bool` | If `True`, sequence continues even if this step fails |
+| `wait_after` | `int` | Seconds to sleep after the step completes |
+
+`from_dict()` accepts `shell` as either a plain string or a list of strings (joined with `\n` at parse time so executors never handle the duality).
+
+Key methods: `to_dict()`, `from_dict(data)`.
+
+### `FixStrategy`
+
+One entry from `fix_strategies.json`, returned by `RemediationAgent.fix_strategies`.
+
+| Field | Type | Description |
+|---|---|---|
+| `key` | `str` | Dict key in `fix_strategies.json` (e.g. `log_and_continue`) |
+| `name` | `str` | Human-readable name |
+| `description` | `str` | What the fix does |
+| `automated` | `bool` | Whether the fix runs without human confirmation |
+| `action_type` | `ActionType` | Determines which executor is used |
+| `parameters` | `List[str]` | Names of `{param}` placeholders expected in `fix_parameters` |
+| `action` | `Dict[str, Any]` | Executor-specific config (message, command, steps, patch, …) |
+
+Key methods: `to_dict()`, `from_dict(key, data)`. Unknown `action_type` values fall back to `ActionType.ADVISORY`.
+
+### Custom executor example
+
+```python
+from env_healing_agent.core.event import ActionType, FixStrategy
+from env_healing_agent.remediation.remediation_agent import ActionExecutor
+from typing import Tuple
+
+class PagerDutyExecutor(ActionExecutor):
+    def execute(self) -> Tuple[bool, str]:
+        routing_key = self.strategy.action.get("routing_key", "")
+        summary = self.sub(self.strategy.action.get("summary", self.strategy.description))
+        # ... call PagerDuty API ...
+        return True, f"Incident created: {summary}"
+
+remediation_agent.register_executor("pagerduty", PagerDutyExecutor)
+```
+
+Then in `fix_strategies.json`:
+```json
+"page_oncall": {
+  "action_type": "pagerduty",
+  "parameters": [],
+  "action": {"routing_key": "abc123", "summary": "Critical issue detected"}
+}
+```
+
+---
+
+## Testing
+
+```bash
+# Run the full test suite
+make test
+
+# Or directly with pytest
+python -m pytest tests/ -v
+```
+
+The test suite lives in `tests/` and covers all four agent layers:
+
+| File | Covers |
+|---|---|
+| `tests/test_event.py` | `KnownIssuePattern`, `Diagnosis`, `RemediationOutcome` dataclasses |
+| `tests/test_diagnostic_agent.py` | `DiagnosticAgent` — built-in path, AI fallback, confidence adjustment, pattern loading |
+| `tests/test_learning_agent.py` | `LearningAgent` — outcome recording, confidence calculations, pattern suggestions |
+| `tests/test_remediation_agent.py` | `ActionType`, `SequenceStep`, `FixStrategy` dataclasses; `RemediationAgent` dispatch, dry-run, stats |
+
+### How tests import the package
+
+The project directory is named `env-healing-agents` (hyphens are not valid Python identifiers). A `conftest.py` at the project root registers the directory as `env_healing_agent` in `sys.modules` so all relative imports resolve correctly during test runs. Test imports use `from env_healing_agent.core.event import ...` etc.
+
+### Fixtures
+
+`tests/conftest.py` provides a `kb_dir` fixture (`tmp_path` with valid `known_issues.json`, `fix_strategies.json`, and `remediation_outcomes.json`) used by all agent tests. Individual tests that need a different knowledge base write directly to the `kb_dir` path before constructing the agent.

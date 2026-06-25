@@ -12,7 +12,7 @@ Designed to run alongside any workload: infrastructure provisioning, CI/CD pipel
 - [Container Image](#container-image)
 - [Kubernetes Deployment](#kubernetes-deployment)
 
-For log streams, runner adapters, CLI flags, and the Python API see [dev.md](dev.md).
+For log streams, runner adapters, CLI flags, the Python API, and the data model see [dev.md](dev.md).
 
 ---
 
@@ -66,7 +66,7 @@ The agent never crashes the workload it monitors. All agent errors are caught in
 
 ## Knowledge Base
 
-Three JSON files in `knowledge_base/` drive all agent behaviour. No patterns or fix logic are hardcoded in Python.
+Three JSON files in `knowledge_base/` drive all agent behaviour. No patterns or fix logic are hardcoded in Python. The repository ships with empty template files so the framework is workload-agnostic by default. `knowledge_base/CAPA_Knowledge_base/` contains a reference set of patterns and strategies built for ROSA-HCP / CAPA workloads — copy those files into your `knowledge_base/` directory to use them.
 
 ### `known_issues.json` — issue patterns
 
@@ -74,12 +74,14 @@ Every detectable issue is defined here with a regex pattern and metadata. The Cl
 
 ```json
 {
+  "version": "1.0.0",
   "patterns": [
     {
       "type": "vpc_deletion_blocked",
       "pattern": "vpc.*(has dependencies|cannot be deleted|DELETE_FAILED)",
       "severity": "high",
       "auto_fix": true,
+      "recommended_fix": "cleanup_vpc_dependencies",
       "description": "VPC deletion blocked by orphaned dependencies",
       "symptoms": ["CloudFormation DELETE_FAILED", "Orphaned ENIs or security groups"],
       "common_causes": ["Resources created outside CloudFormation blocking stack deletion"],
@@ -91,10 +93,11 @@ Every detectable issue is defined here with a regex pattern and metadata. The Cl
 
 | Field | Description |
 |---|---|
-| `type` | Unique issue identifier — routes to the correct diagnostic method |
+| `type` | Unique issue identifier |
 | `pattern` | Python regex matched against each log line (case-insensitive) |
 | `severity` | `low` / `medium` / `high` / `critical` |
 | `auto_fix` | `true` = agent attempts remediation; `false` = log and alert only |
+| `recommended_fix` | Fix strategy key to look up in `fix_strategies.json` (defaults to `log_and_continue` if absent) |
 | `learned_confidence` | Adjusted by the learning agent over time (0.3–1.0) |
 
 ### `fix_strategies.json` — machine-executable fixes
@@ -267,19 +270,17 @@ The AI client returns a structured diagnosis **and** any new issue patterns it i
 
 #### Built-in fallback
 
-When the Claude agent is disabled or unavailable, the diagnostic agent falls back to the preloaded knowledge base stored in `known_issues.json` and `fix_strategies.json`. These files provide built-in issue detection patterns and remediation strategies. Below are examples of known issues identified and learned from the ROSA-HCP CAPA environment:
+When an AI client is unavailable the diagnostic agent falls back to reading directly from `KnownIssuePattern` metadata — there is no hardcoded Python logic per issue type:
 
-| Issue type | Approach |
+| Diagnosis field | Source in `known_issues.json` |
 |---|---|
-| `rosanetwork_stuck_deletion` | Check CloudFormation stack status; find VPC blocking dependencies |
-| `rosacontrolplane_stuck_deletion` | Check ROSA cluster state via `rosa describe cluster` |
-| `rosaroleconfig_stuck_deletion` | Log for operator review |
-| `cloudformation_deletion_failure` | Log for manual review |
-| `ocm_auth_failure` | Advisory — credentials need refresh |
-| `capi_not_installed` | Check `capi-system` / `capa-system` deployments |
-| `api_rate_limit` | Advisory — backoff recommended |
-| `repeated_timeouts` | Advisory — suggest timeout increase |
-| *(any other)* | Generic fallback at 30% confidence — below threshold, no auto-fix |
+| `root_cause` | `description` |
+| `confidence` | `learned_confidence` |
+| `severity` | `severity` |
+| `evidence` | `symptoms` list |
+| `recommended_fix` | `recommended_fix` (defaults to `log_and_continue` if absent) |
+
+All issue-specific behaviour is expressed in the knowledge base JSON files. See `knowledge_base/CAPA_Knowledge_base/` for a reference set of patterns covering ROSA-HCP / CAPA workloads.
 
 ### Remediation Agent
 
@@ -292,16 +293,13 @@ diagnosis.recommended_fix
             → route to ActionExecutor
 ```
 
+All fix names are defined in `fix_strategies.json` — no fixes are hardcoded in Python. The framework ships with a single built-in default:
+
 | Fix name | `action_type` | What it does |
 |---|---|---|
-| `backoff_and_retry` | `advisory` | Log recommended wait time — non-blocking |
-| `refresh_ocm_token` | `cli_sequence` | `rosa login` with client credentials then `rosa create ocm-role --mode auto` |
-| `log_and_continue` | `advisory` | Log and return success |
-| `manual_cloudformation_cleanup` | `advisory` | Flag stack for operator review |
-| `increase_timeout_and_monitor` | `advisory` | Suggest timeout increase |
-| `install_capi_capa` | `cli_sequence` | Verify CAPI/CAPA controller deployments |
-| `retry_cloudformation_delete` | `cli_sequence` | Resolve stack params from ROSANetwork CR, delete VPC endpoints/ENIs/SGs, retry CF stack deletion |
-| `cleanup_vpc_dependencies` | `cli_sequence` | Per-resource ENI/SG detach and delete |
+| `log_and_continue` | `advisory` | Log the issue and return success — safe no-op default |
+
+Domain-specific fixes (e.g. for CAPA / ROSA workloads) are defined in `knowledge_base/CAPA_Knowledge_base/fix_strategies.json`. Copy and extend that file in your own `knowledge_base/` directory to add new fixes without touching Python.
 
 Dry-run mode returns `(True, "DRY RUN: ...")` without executing any commands.
 
@@ -440,13 +438,12 @@ The knowledge base is stored in numbered ConfigMaps so it can be updated without
 
 | ConfigMap | Content |
 |---|---|
-| `env-healing-agents-known-issues-1` | Issue patterns 1–6 |
-| `env-healing-agents-known-issues-2` | Issue patterns 7–12 |
-| `env-healing-agents-fix-strategies-1` | All fix strategies |
-| `env-healing-agents-remediation-outcomes-1` | Empty on first deploy |
-| `env-healing-agents-init-script` | Python merge script |
+| `env-healing-agents-known-issues-1` | Issue patterns (empty template on deploy — add your own patterns) |
+| `env-healing-agents-fix-strategies-1` | Fix strategies (ships with `log_and_continue` only) |
+| `env-healing-agents-remediation-outcomes-1` | Remediation history (empty on first deploy) |
+| `env-healing-agents-init-script` | Python merge script that combines numbered chunks into single JSON files |
 
-To add a new chunk: create the ConfigMap, add a `volume` + `volumeMount` in `deployment.yaml` at the next numbered path (`/cms/<type>/N`), then `oc apply`. No script changes needed.
+Domain-specific patterns and strategies (e.g. the CAPA/ROSA examples in `knowledge_base/CAPA_Knowledge_base/`) can be deployed as additional numbered chunks. To add a chunk: create the ConfigMap, add a `volume` + `volumeMount` in `deployment.yaml` at the next numbered path (`/cms/<type>/N`), then `oc apply`. No script changes needed.
 
 The agent patches these ConfigMaps at runtime when it persists new knowledge. The target ConfigMap names are controlled by env vars in `deployment.yaml`:
 

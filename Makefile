@@ -39,10 +39,11 @@ _NS_2     := $(word 2,$(_NS_LIST))
 _NS_3     := $(word 3,$(_NS_LIST))
 _NS_4     := $(word 4,$(_NS_LIST))
 
-.PHONY: build push image-build image-push deploy undeploy help
+.PHONY: build push image-build image-push deploy undeploy test help
 
 help:
 	@echo "Targets:"
+	@echo "  test         Run the unit test suite"
 	@echo "  build        Build the container image"
 	@echo "  push         Push the container image to the registry"
 	@echo "  image-build  Alias for build"
@@ -98,6 +99,9 @@ help:
 	@echo "    OCM_CLIENT_SECRET=my-client-secret \\"
 	@echo "    WATCH_LABEL=cluster.x-k8s.io/provider \\"
 	@echo "    WATCH_NAMESPACE=\"capi-system capa-system\""
+
+test:
+	python -m pytest $(MAKEFILE_DIR)tests/ -v
 
 build:
 	docker build -t $(IMAGE) $(MAKEFILE_DIR)

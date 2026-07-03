@@ -55,6 +55,14 @@ def _build_parser() -> argparse.ArgumentParser:
         epilog=__doc__,
     )
     parser.add_argument("--kb-dir", default=str(_DEFAULT_KB), help="Path to knowledge base directory")
+    parser.add_argument(
+        "--cms-dir",
+        default=None,
+        metavar="PATH",
+        help="Path to mounted ConfigMap chunks (e.g. /cms). When set, knowledge-base JSON files "
+             "are merged from <cms-dir>/{known-issues,fix-strategies,remediation-outcomes}/<N>/data.json "
+             "into --kb-dir before the pipeline starts.",
+    )
     parser.add_argument("--dry-run", action="store_true", help="Detect issues but do not execute fixes")
 
     # AI client selection — mutually exclusive at runtime
@@ -155,6 +163,7 @@ def main(argv=None):
     parser = _build_parser()
     args = parser.parse_args(argv)
 
+    from env_healing_agent.utils.merge_kb import merge_knowledge_base
     from env_healing_agent.core.pipeline import AgentPipeline
     from env_healing_agent.frameworks import (
         AnsibleFramework,
@@ -166,6 +175,9 @@ def main(argv=None):
     from env_healing_agent.log_streams import KubernetesLogStream, FileTailStream, JournaldStream, CloudWatchStream
 
     kb_dir = Path(args.kb_dir)
+
+    if args.cms_dir:
+        merge_knowledge_base(cms_dir=args.cms_dir, kb_dir=str(kb_dir))
 
     # Build framework
     if args.framework == "ansible":

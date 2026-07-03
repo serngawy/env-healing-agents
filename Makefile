@@ -29,6 +29,11 @@ OCM_API_URL                 ?=
 OCM_CLIENT_ID               ?=
 OCM_CLIENT_SECRET           ?=
 
+# ── Secret deployment mode ────────────────────────────────────────────────────
+# APPLY_SECRETS_YAML=true  → apply deploy/secrets.yaml (fill placeholders first)
+# APPLY_SECRETS_YAML=false → create secrets from Makefile variables (default)
+APPLY_SECRETS_YAML ?= false
+
 # Build context is the env-healing-agents/ directory (this Makefile lives there).
 MAKEFILE_DIR := $(dir $(abspath $(lastword $(MAKEFILE_LIST))))
 
@@ -67,6 +72,10 @@ help:
 	@echo "  -- Gemini (AI_CLIENT=gemini) --"
 	@echo "  GEMINI_API_KEY              (required) Gemini API key"
 	@echo "  GEMINI_MODEL                (optional) model name (default: gemini-2.0-flash)"
+	@echo ""
+	@echo "Secret deployment mode:"
+	@echo "  APPLY_SECRETS_YAML          true  → oc apply -f deploy/secrets.yaml (fill placeholders first)"
+	@echo "                              false → create secrets from variables below (default)"
 	@echo ""
 	@echo "Common secrets:"
 	@echo "  AWS_CREDENTIALS_FILE        (required) path to AWS credentials file"
@@ -117,51 +126,56 @@ deploy:
 	@if [ "$(AI_CLIENT)" != "claude" ] && [ "$(AI_CLIENT)" != "gemini" ]; then \
 	  echo "ERROR: AI_CLIENT must be 'claude' or 'gemini' (got: '$(AI_CLIENT)')"; exit 1; \
 	fi
-	@# Validate AI-client-specific credentials
-	@if [ "$(AI_CLIENT)" = "claude" ]; then \
-	  test -n "$(ANTHROPIC_VERTEX_PROJECT_ID)" || { echo "ERROR: ANTHROPIC_VERTEX_PROJECT_ID is not set"; exit 1; }; \
-	  test -n "$(CLOUD_ML_REGION)"             || { echo "ERROR: CLOUD_ML_REGION is not set"; exit 1; }; \
-	  test -n "$(GCP_SA_KEY_FILE)"             || { echo "ERROR: GCP_SA_KEY_FILE is not set"; exit 1; }; \
+	@# When creating secrets from variables, validate all required credentials
+	@if [ "$(APPLY_SECRETS_YAML)" != "true" ]; then \
+	  if [ "$(AI_CLIENT)" = "claude" ]; then \
+	    test -n "$(ANTHROPIC_VERTEX_PROJECT_ID)" || { echo "ERROR: ANTHROPIC_VERTEX_PROJECT_ID is not set"; exit 1; }; \
+	    test -n "$(CLOUD_ML_REGION)"             || { echo "ERROR: CLOUD_ML_REGION is not set"; exit 1; }; \
+	    test -n "$(GCP_SA_KEY_FILE)"             || { echo "ERROR: GCP_SA_KEY_FILE is not set"; exit 1; }; \
+	  fi; \
+	  if [ "$(AI_CLIENT)" = "gemini" ]; then \
+	    test -n "$(GEMINI_API_KEY)" || { echo "ERROR: GEMINI_API_KEY is not set"; exit 1; }; \
+	  fi; \
+	  test -n "$(AWS_CREDENTIALS_FILE)" || { echo "ERROR: AWS_CREDENTIALS_FILE is not set"; exit 1; }; \
+	  test -n "$(OCM_API_URL)"          || { echo "ERROR: OCM_API_URL is not set"; exit 1; }; \
+	  test -n "$(OCM_CLIENT_ID)"        || { echo "ERROR: OCM_CLIENT_ID is not set"; exit 1; }; \
+	  test -n "$(OCM_CLIENT_SECRET)"    || { echo "ERROR: OCM_CLIENT_SECRET is not set"; exit 1; }; \
 	fi
-	@if [ "$(AI_CLIENT)" = "gemini" ]; then \
-	  test -n "$(GEMINI_API_KEY)" || { echo "ERROR: GEMINI_API_KEY is not set"; exit 1; }; \
-	fi
-	@# Validate common credentials
-	@test -n "$(AWS_CREDENTIALS_FILE)" || { echo "ERROR: AWS_CREDENTIALS_FILE is not set"; exit 1; }
-	@test -n "$(OCM_API_URL)"          || { echo "ERROR: OCM_API_URL is not set"; exit 1; }
-	@test -n "$(OCM_CLIENT_ID)"        || { echo "ERROR: OCM_CLIENT_ID is not set"; exit 1; }
-	@test -n "$(OCM_CLIENT_SECRET)"    || { echo "ERROR: OCM_CLIENT_SECRET is not set"; exit 1; }
-	@echo "Deploying with AI_CLIENT=$(AI_CLIENT)..."
-	oc apply -f $(MAKEFILE_DIR)deploy/secrets.yaml
-	@# Claude secrets
-	@if [ "$(AI_CLIENT)" = "claude" ]; then \
-	  oc create secret generic env-healing-agents-vertex \
-	    --from-literal=project-id=$(ANTHROPIC_VERTEX_PROJECT_ID) \
-	    --from-literal=region=$(CLOUD_ML_REGION) \
+	@echo "Create Namespace"
+	oc apply -f $(MAKEFILE_DIR)deploy/ns.yaml
+	@echo "Deploying with AI_CLIENT=$(AI_CLIENT), APPLY_SECRETS_YAML=$(APPLY_SECRETS_YAML)..."
+	@if [ "$(APPLY_SECRETS_YAML)" = "true" ]; then \
+	  echo "Applying deploy/secrets.yaml..."; \
+	  oc apply -f $(MAKEFILE_DIR)deploy/secrets.yaml; \
+	else \
+	  if [ "$(AI_CLIENT)" = "claude" ]; then \
+	    oc create secret generic env-healing-agents-vertex \
+	      --from-literal=project-id=$(ANTHROPIC_VERTEX_PROJECT_ID) \
+	      --from-literal=region=$(CLOUD_ML_REGION) \
+	      -n env-healing-agents-ns \
+	      --dry-run=client -o yaml | oc apply -f -; \
+	    oc create secret generic env-healing-agents-gcp-sa \
+	      --from-file=sa-key.json=$(GCP_SA_KEY_FILE) \
+	      -n env-healing-agents-ns \
+	      --dry-run=client -o yaml | oc apply -f -; \
+	  fi; \
+	  if [ "$(AI_CLIENT)" = "gemini" ]; then \
+	    oc create secret generic env-healing-agents-gemini \
+	      --from-literal=api-key=$(GEMINI_API_KEY) \
+	      -n env-healing-agents-ns \
+	      --dry-run=client -o yaml | oc apply -f -; \
+	  fi; \
+	  oc create secret generic env-healing-agents-aws-credentials \
+	    --from-file=credentials=$(AWS_CREDENTIALS_FILE) \
 	    -n env-healing-agents-ns \
 	    --dry-run=client -o yaml | oc apply -f -; \
-	  oc create secret generic env-healing-agents-gcp-sa \
-	    --from-file=sa-key.json=$(GCP_SA_KEY_FILE) \
+	  oc create secret generic env-healing-agents-ocm-credentials \
+	    --from-literal=ocmApiUrl=$(OCM_API_URL) \
+	    --from-literal=ocmClientID=$(OCM_CLIENT_ID) \
+	    --from-literal=ocmClientSecret=$(OCM_CLIENT_SECRET) \
 	    -n env-healing-agents-ns \
 	    --dry-run=client -o yaml | oc apply -f -; \
 	fi
-	@# Gemini secret
-	@if [ "$(AI_CLIENT)" = "gemini" ]; then \
-	  oc create secret generic env-healing-agents-gemini \
-	    --from-literal=api-key=$(GEMINI_API_KEY) \
-	    -n env-healing-agents-ns \
-	    --dry-run=client -o yaml | oc apply -f -; \
-	fi
-	oc create secret generic env-healing-agents-aws-credentials \
-	  --from-file=credentials=$(AWS_CREDENTIALS_FILE) \
-	  -n env-healing-agents-ns \
-	  --dry-run=client -o yaml | oc apply -f -
-	oc create secret generic env-healing-agents-ocm-credentials \
-	  --from-literal=ocmApiUrl=$(OCM_API_URL) \
-	  --from-literal=ocmClientID=$(OCM_CLIENT_ID) \
-	  --from-literal=ocmClientSecret=$(OCM_CLIENT_SECRET) \
-	  -n env-healing-agents-ns \
-	  --dry-run=client -o yaml | oc apply -f -
 	oc apply -f $(MAKEFILE_DIR)deploy/configmap.yaml
 	oc apply -f $(MAKEFILE_DIR)deploy/rbac.yaml
 	oc apply -f $(MAKEFILE_DIR)deploy/deployment.yaml

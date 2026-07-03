@@ -18,46 +18,13 @@ spec:
       serviceAccountName: env-healing-agents
 
       # -----------------------------------------------------------------------
-      # Init container: merge all ConfigMap chunks into a single emptyDir.
-      #
-      # To add a new chunk for any JSON file:
-      #   1. Create the new ConfigMap (e.g. env-healing-agents-known-issues-3).
-      #   2. Add a volume below referencing it.
-      #   3. Add a volumeMount to this init container at the next numbered path
-      #      (e.g. /cms/known-issues/3).
-      #   Re-apply — no changes to the merge script needed.
-      # -----------------------------------------------------------------------
-      initContainers:
-        - name: merge-knowledge-base
-          image: python:3.11-slim
-          command: ["python", "/scripts/merge_kb.py"]
-          volumeMounts:
-            # Output — shared with the main container
-            - name: knowledge-base
-              mountPath: /kb
-            # Merge script
-            - name: init-script
-              mountPath: /scripts
-            # known_issues chunks
-            - name: known-issues-1
-              mountPath: /cms/known-issues/1
-            - name: known-issues-2
-              mountPath: /cms/known-issues/2
-            # fix_strategies chunks
-            - name: fix-strategies-1
-              mountPath: /cms/fix-strategies/1
-            # remediation_outcomes chunks
-            - name: remediation-outcomes-1
-              mountPath: /cms/remediation-outcomes/1
-
-      # -----------------------------------------------------------------------
       # Main container
       # -----------------------------------------------------------------------
       containers:
         - name: env-healing-agents
           # Build: docker build -t env-healing-agents:latest env-healing-agents/
           # Push to your registry then update this field.
-          image: quay.io/melserng/env-healing-agents:latest
+          image: ghcr.io/serngawy/env-healing-agents:dev
           imagePullPolicy: Always
 
           # Run in generic mode with a no-op main process.
@@ -74,6 +41,8 @@ spec:
             # Global flags must come before the subcommand.
             - "--kb-dir"
             - "/kb"
+            - "--cms-dir"
+            - "/cms"
             - "--k8s-label"
             - "$(WATCH_LABEL)"
             # One --k8s-namespace per watched namespace; empty values are ignored by the CLI.
@@ -167,9 +136,18 @@ spec:
               value: "/gcp/sa-key.json"
 
           volumeMounts:
-            # Merged knowledge base written by the init container
+            # Merged knowledge base — written at startup by merge_kb.merge_knowledge_base()
             - name: knowledge-base
               mountPath: /kb
+            # ConfigMap chunks merged at startup into /kb
+            - name: known-issues-1
+              mountPath: /cms/known-issues/1
+            - name: known-issues-2
+              mountPath: /cms/known-issues/2
+            - name: fix-strategies-1
+              mountPath: /cms/fix-strategies/1
+            - name: remediation-outcomes-1
+              mountPath: /cms/remediation-outcomes/1
             # GCP SA key for Vertex AI ADC
             - name: gcp-sa
               mountPath: /gcp
@@ -212,14 +190,9 @@ spec:
       # Volumes
       # -----------------------------------------------------------------------
       volumes:
-        # emptyDir shared between init container (writer) and main container (reader)
+        # emptyDir populated at startup by merge_kb.merge_knowledge_base()
         - name: knowledge-base
           emptyDir: {}
-
-        # Merge script
-        - name: init-script
-          configMap:
-            name: env-healing-agents-init-script
 
         # known_issues chunks — add more here as the file grows
         - name: known-issues-1

@@ -220,7 +220,7 @@ def main(argv=None):
 
     # Build extra streams
     extra_streams = []
-    if args.k8s_pod or args.k8s_label:
+    if args.k8s_pod or args.k8s_label or args.k8s_namespaces:
         extra_streams.append(
             KubernetesLogStream(
                 pod=args.k8s_pod or "",

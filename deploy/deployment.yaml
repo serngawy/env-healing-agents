@@ -79,7 +79,7 @@ spec:
             # - name: GEMINI_MODEL
             #   value: "gemini-2.0-flash"
             - name: WATCH_LABEL
-              value: "app=test-env"
+              value: ""
             - name: WATCH_NAMESPACE_1
               value: "default"
             - name: WATCH_NAMESPACE_2
@@ -142,8 +142,6 @@ spec:
             # ConfigMap chunks merged at startup into /kb
             - name: known-issues-1
               mountPath: /cms/known-issues/1
-            - name: known-issues-2
-              mountPath: /cms/known-issues/2
             - name: fix-strategies-1
               mountPath: /cms/fix-strategies/1
             - name: remediation-outcomes-1
@@ -198,10 +196,6 @@ spec:
         - name: known-issues-1
           configMap:
             name: env-healing-agents-known-issues-1
-        - name: known-issues-2
-          configMap:
-            name: env-healing-agents-known-issues-2
-
         # fix_strategies chunks
         - name: fix-strategies-1
           configMap:

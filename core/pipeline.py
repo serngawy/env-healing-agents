@@ -215,14 +215,24 @@ class AgentPipeline:
 
             success, message = self.remediation.remediate(diagnosis.to_dict())
 
-            self.learning.record_outcome(
-                issue_type=issue_type,
-                fix_applied=diagnosis.recommended_fix or "",
-                success=success,
-                confidence=diagnosis.confidence,
-                root_cause=diagnosis.root_cause,
-                resource_key=resource_key,
+            # Only record outcomes when a real fix was actually executed —
+            # skip dry-run runs and advisory-only strategies (e.g. log_and_continue).
+            fix_key = diagnosis.recommended_fix or ""
+            strategy = self.remediation.fix_strategies.get(fix_key)
+            actually_executed = (
+                not self.dry_run
+                and strategy is not None
+                and strategy.action_type.value != "advisory"
             )
+            if actually_executed:
+                self.learning.record_outcome(
+                    issue_type=issue_type,
+                    fix_applied=fix_key,
+                    success=success,
+                    confidence=diagnosis.confidence,
+                    root_cause=diagnosis.root_cause,
+                    resource_key=resource_key,
+                )
 
             if success:
                 self.monitor.mark_issue_resolved(issue_type, resource_key)

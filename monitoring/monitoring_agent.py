@@ -223,9 +223,44 @@ class MonitoringAgent(BaseAgent):
             return f"{ns or 'default'}/{name}"
         return self._current_task or "unknown"
 
+    # Generic patterns used for bootstrapping when known_issues.patterns is empty.
+    # Conservative anchors (Kubernetes error level prefix, Go panics, structured
+    # log error fields) to avoid false positives on ordinary INFO output.
+    _BOOTSTRAP_PATTERNS: List[Dict] = [
+        {
+            "type": "generic_error",
+            "pattern": r"^\s*E\d{4}\s",
+            "description": "Kubernetes structured-log error line (E<date> prefix)",
+            "auto_fix": True,
+        },
+        {
+            "type": "generic_panic",
+            "pattern": r"\bpanic\b",
+            "description": "Go runtime panic",
+            "auto_fix": True,
+        },
+        {
+            "type": "generic_error",
+            "pattern": r'"level"\s*:\s*"error"',
+            "description": "Structured JSON log with level=error",
+            "auto_fix": True,
+        },
+        {
+            "type": "generic_error",
+            "pattern": r"\blevel=error\b",
+            "description": "Logfmt log with level=error",
+            "auto_fix": True,
+        },
+    ]
+
     def _detect_issue(self, line: str) -> Optional[Dict]:
         patterns = self.known_issues.get("patterns", [])
-        return self.match_pattern(line, patterns)
+        matched = self.match_pattern(line, patterns)
+        if matched:
+            return matched
+        # Fall back to bootstrap patterns so the learning pipeline can populate
+        # known_issues from real errors even when no patterns are seeded yet.
+        return self.match_pattern(line, self._BOOTSTRAP_PATTERNS)
 
     def get_statistics(self) -> Dict:
         return {

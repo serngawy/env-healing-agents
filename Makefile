@@ -1,13 +1,18 @@
 IMAGE_REGISTRY ?= ghcr.io/serngawy
 IMAGE_NAME     ?= env-healing-agents
 IMAGE_TAG      ?= dev
-IMAGE          := $(IMAGE_REGISTRY)/$(IMAGE_NAME):$(IMAGE_TAG)
+IMAGE          ?= $(IMAGE_REGISTRY)/$(IMAGE_NAME):$(IMAGE_TAG)
 
 # Pods to watch — override on the command line.
 # WATCH_NAMESPACE accepts one or more space-separated namespaces.
 # Use "*" to watch all namespaces (requires cluster-wide RBAC in rbac.yaml).
-WATCH_LABEL       ?= app=test-env
+WATCH_LABEL       ?=
 WATCH_NAMESPACE   ?= default kube-system
+
+# ── Remediation mode ─────────────────────────────────────────────────────────
+# true  → agent applies fixes automatically
+# false → detect and diagnose only, no fix executed (default)
+REMEDIATION  ?= false
 
 # ── AI client selection ───────────────────────────────────────────────────────
 # Choose "claude" (Vertex AI, default) or "gemini". Only one may be active.
@@ -180,7 +185,9 @@ deploy:
 	oc apply -f $(MAKEFILE_DIR)deploy/rbac.yaml
 	oc apply -f $(MAKEFILE_DIR)deploy/deployment.yaml
 	oc apply -f $(MAKEFILE_DIR)deploy/service.yaml
-	@echo "Configuring AI client, watch label, and namespaces..."
+	@echo "Configuring image, remediation, AI client, watch label, and namespaces..."
+	oc set image deployment/env-healing-agents env-healing-agents=$(IMAGE) -n env-healing-agents-ns
+	oc set env deployment/env-healing-agents REMEDIATION="$(REMEDIATION)" -n env-healing-agents-ns
 	@if [ "$(AI_CLIENT)" = "gemini" ]; then \
 	  oc set env deployment/env-healing-agents \
 	    AI_CLIENT="$(AI_CLIENT)" \
@@ -205,3 +212,4 @@ undeploy:
 	oc delete -f $(MAKEFILE_DIR)deploy/rbac.yaml       --ignore-not-found
 	oc delete -f $(MAKEFILE_DIR)deploy/configmap.yaml  --ignore-not-found
 	oc delete -f $(MAKEFILE_DIR)deploy/secrets.yaml    --ignore-not-found
+	oc delete -f $(MAKEFILE_DIR)deploy/ns.yaml    --ignore-not-found

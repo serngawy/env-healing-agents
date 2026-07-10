@@ -134,10 +134,10 @@ class KubernetesLogStream(BaseLogStream):
             cmd = [self.kubectl_cmd, "logs", "-f", "-n", namespace]
         if self.label_selector:
             cmd += ["-l", self.label_selector, "--max-log-requests=10"]
-        else:
-            if not self.pod:
-                raise ValueError("Either pod or label_selector must be specified")
+        elif self.pod:
             cmd.append(self.pod)
+        else:
+            cmd.append("--max-log-requests=50")
         if self.container:
             cmd += ["-c", self.container]
         if self.previous:
@@ -216,11 +216,12 @@ class KubernetesLogStream(BaseLogStream):
             for ns in self.namespaces:
                 if self.label_selector:
                     pod_list = v1.list_namespaced_pod(namespace=ns, label_selector=self.label_selector)
-                    pods += [(p.metadata.name, ns) for p in pod_list.items]
                 elif self.pod:
                     pods.append((self.pod, ns))
+                    continue
                 else:
-                    raise ValueError("Either pod or label_selector must be specified")
+                    pod_list = v1.list_namespaced_pod(namespace=ns)
+                pods += [(p.metadata.name, ns) for p in pod_list.items]
 
         return pods
 

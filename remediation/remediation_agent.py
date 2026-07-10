@@ -417,6 +417,11 @@ class RemediationAgent(BaseAgent):
 
         strategy = self.fix_strategies.get(recommended_fix)
         if not strategy:
+            # Strategy may have been written to disk by the diagnostic agent during
+            # this run after the cache was first populated — invalidate and retry once.
+            self._fix_strategies = None
+            strategy = self.fix_strategies.get(recommended_fix)
+        if not strategy:
             return False, f"No fix strategy defined for '{recommended_fix}' in fix_strategies.json"
 
         try:

@@ -61,14 +61,80 @@ Respond ONLY with valid JSON — no markdown, no prose — in exactly this struc
       "symptoms": ["<observable symptom>"],
       "common_causes": ["<likely root cause>"]
     }
-  ]
+  ],
+  "new_fix_strategies": {
+    "<unique_snake_case_key>": {
+      "name": "<human-readable name>",
+      "description": "<what this strategy does>",
+      "automated": true,
+      "action_type": "<one of: advisory | cli_command | cli_sequence | kubectl_patch>",
+      "parameters": ["<param1>", "<param2>"],
+      "action": "<see action schema per action_type below>"
+    }
+  }
 }
+
+action_type schemas — use exactly one of these four forms:
+
+advisory  (no command is run; logs a message and returns success)
+  "action": { "message": "<operator-facing guidance>", "success": true }
+
+cli_command  (runs a single command; use for one-shot CLI calls)
+  "action": {
+    "command": ["<binary>", "<arg1>", "{param_name}", ...],
+    "timeout": 30,
+    "not_found_is_success": false,
+    "success_message": "<text on success>",
+    "failure_message": "<text on failure>"
+  }
+
+cli_sequence  (runs ordered steps; use for multi-step remediation)
+  "action": {
+    "steps": [
+      {
+        "name": "<step_label>",
+        "type": "command",
+        "command": ["<binary>", "<arg>", "{param_name}"],
+        "timeout": 30,
+        "optional": false,
+        "wait_after": 0
+      },
+      {
+        "name": "<shell_step_label>",
+        "type": "shell",
+        "shell": "export VAR=$(aws ...); aws ... --id $VAR",
+        "timeout": 120,
+        "optional": true,
+        "wait_after": 5
+      }
+    ],
+    "success_message": "<text when all steps pass>",
+    "failure_message": "<text when a required step fails>"
+  }
+
+kubectl_patch  (runs oc/kubectl patch; use to clear finalizers or update resources)
+  "action": {
+    "patch": {"metadata": {"finalizers": null}},
+    "patch_type": "merge",
+    "kubectl_cmd": "oc",
+    "timeout": 30,
+    "not_found_is_success": true,
+    "success_message": "Patched {resource_type}/{resource_name}",
+    "failure_message": "Failed to patch {resource_type}/{resource_name}"
+  }
 
 Rules:
 - recommended_fix MUST be one of the provided available_fix_strategies keys.
-  Use "log_and_continue" if none fit.
+  If none fit AND you define a new strategy in new_fix_strategies, use that
+  new key as recommended_fix. Fall back to "log_and_continue" only when no
+  specific strategy applies.
 - new_patterns MUST be [] when all visible issues are already covered by
   existing_patterns or when no distinct new issue is visible.
+- new_fix_strategies MUST be {} when the existing strategies are sufficient.
+  Only add a strategy when the issue clearly requires a distinct remediation
+  action not covered by any available_fix_strategies entry.
+- action_type MUST be exactly one of: advisory, cli_command, cli_sequence, kubectl_patch.
+  Never use "manual" or "automated" — they are not valid executor types.
 - confidence reflects certainty about the root cause given the log evidence
   (0.0 = guessing, 1.0 = definitive from explicit log evidence).
 - evidence entries must quote or paraphrase actual lines from the log_chunk.
@@ -140,7 +206,7 @@ class ClaudeClient:
         log_chunk: List[str],
         known_patterns: List[Dict],
         fix_strategies: Dict,
-    ) -> Tuple[Optional[Dict], List[Dict]]:
+    ) -> Tuple[Optional[Dict], List[Dict], Dict]:
         """
         Ask Claude to diagnose an issue from a log chunk.
 
@@ -191,14 +257,33 @@ class ClaudeClient:
 
         response = self._client.messages.create(
             model=self._model,
-            max_tokens=2048,
+            max_tokens=4096,
             system=_SYSTEM_PROMPT,
             messages=[{"role": "user", "content": json.dumps(payload, indent=2)}],
         )
 
-        raw = response.content[0].text.strip()
+        # Find the first text block — skip thinking blocks or other block types.
+        raw = ""
+        for block in response.content:
+            text = getattr(block, "text", None)
+            if text:
+                raw = text.strip()
+                break
+
+        if not raw:
+            raise ValueError(
+                f"Claude returned no text content (stop_reason={response.stop_reason}, "
+                f"blocks={[type(b).__name__ for b in response.content]})"
+            )
+
+        # Strip markdown code fences that Claude sometimes wraps around JSON.
+        if raw.startswith("```"):
+            raw = re.sub(r"^```[a-z]*\n?", "", raw)
+            raw = re.sub(r"\n?```$", "", raw)
+
         data = json.loads(raw)
 
         diagnosis = data.get("diagnosis")
         new_patterns = data.get("new_patterns") or []
-        return diagnosis, new_patterns
+        new_fix_strategies = data.get("new_fix_strategies") or {}
+        return diagnosis, new_patterns, new_fix_strategies

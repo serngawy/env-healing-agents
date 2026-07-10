@@ -187,7 +187,7 @@ class DiagnosticAgent(BaseAgent):
         fix_strategies: Dict = self._load_knowledge("fix_strategies.json").get("fix_strategies", {})
 
         try:
-            result, new_patterns = self._ai_client.diagnose(
+            result, new_patterns, new_strategies = self._ai_client.diagnose(
                 issue_type=issue.issue_type,
                 log_chunk=log_chunk,
                 known_patterns=known_patterns,
@@ -203,9 +203,18 @@ class DiagnosticAgent(BaseAgent):
         if new_patterns:
             self._persist_new_patterns(new_patterns)
 
-        new_strategies = result.pop("new_fix_strategies", None)
         if new_strategies:
             self._persist_new_fix_strategies(new_strategies)
+            # If Claude fell back to log_and_continue but also generated a specific
+            # strategy, promote the new strategy as the recommended fix so the
+            # remediation agent actually executes it.
+            if result.get("recommended_fix") == "log_and_continue" and new_strategies:
+                promoted = next(iter(new_strategies))
+                self.log(
+                    f"Promoting recommended_fix from 'log_and_continue' to '{promoted}'",
+                    "info",
+                )
+                result["recommended_fix"] = promoted
 
         return self._dict_to_diagnosis(result)
 

@@ -7,7 +7,7 @@ IMAGE          ?= $(IMAGE_REGISTRY)/$(IMAGE_NAME):$(IMAGE_TAG)
 # WATCH_NAMESPACE accepts one or more space-separated namespaces.
 # Use "*" to watch all namespaces (requires cluster-wide RBAC in rbac.yaml).
 WATCH_LABEL       ?=
-WATCH_NAMESPACE   ?= default kube-system
+WATCH_NAMESPACE   ?= default
 
 # ── Remediation mode ─────────────────────────────────────────────────────────
 # true  → agent applies fixes automatically
